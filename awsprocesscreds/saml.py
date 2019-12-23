@@ -59,6 +59,8 @@ class SAMLAuthenticator(object):
 class GenericFormsBasedAuthenticator(SAMLAuthenticator):
     USERNAME_FIELD = 'username'
     PASSWORD_FIELD = 'password'
+    CREDENTIALS_FORM_INDEX = 0
+    SAML_FORM_INDEX = 0
 
     _ERROR_BAD_RESPONSE = (
         'Received a non-200 response (%s) when making a request to: %s'
@@ -139,6 +141,7 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
             endpoint)
         self._fill_in_form_values(config, form_data)
         response = self._send_form_post(login_url, form_data)
+        # TODO: Duo MFA handling needs to activate at this point.
         return self._extract_saml_assertion_from_response(response)
 
     def _validate_config_values(self, config):
@@ -149,7 +152,7 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
     def _retrieve_login_form_from_endpoint(self, endpoint):
         response = self._requests_session.get(endpoint, verify=True)
         self._assert_non_error_response(response)
-        login_form_html_node = self._parse_form_from_html(response.text)
+        login_form_html_node = self._parse_form_from_html(response.text, form_index=self.CREDENTIALS_FORM_INDEX)
         if login_form_html_node is None:
             raise SAMLError(self._ERROR_NO_FORM % endpoint)
         form_action = urljoin(endpoint,
@@ -166,12 +169,12 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
                 self._ERROR_BAD_RESPONSE % (response.status_code,
                                             response.url))
 
-    def _parse_form_from_html(self, html):
+    def _parse_form_from_html(self, html, form_index):
         # Scrape a form from html page, and return it as an elementtree element
         parser = FormParser()
         parser.feed(html)
         if parser.forms:
-            return ET.fromstring(parser.extract_form(0))
+            return ET.fromstring(parser.extract_form(form_index))
 
     def _fill_in_form_values(self, config, form_data):
         username = config['saml_username']
@@ -194,7 +197,7 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
         return response.text
 
     def _extract_saml_assertion_from_response(self, response_body):
-        parsed = self._parse_form_from_html(response_body)
+        parsed = self._parse_form_from_html(response_body, form_index=self.SAML_FORM_INDEX)
         if parsed is not None:
             assertion = self._get_value_of_first_tag(
                 parsed, 'input', 'name', 'SAMLResponse')
@@ -263,6 +266,29 @@ class ADFSFormsBasedAuthenticator(GenericFormsBasedAuthenticator):
                 config.get('saml_provider') == 'adfs')
 
 
+class ShibbolethAuthenticator(GenericFormsBasedAuthenticator):
+    USERNAME_FIELD = 'username'
+    PASSWORD_FIELD = 'password'
+    CREDENTIALS_FORM_INDEX = 1
+    SAML_FORM_INDEX = 0
+
+    def is_suitable(self, config):
+        return (config.get('saml_authentication_type') == 'form' and
+                config.get('saml_provider') == 'shib')
+
+    def _retrieve_login_form_from_endpoint(self, endpoint):
+        response = self._requests_session.get(endpoint, verify=True)
+        form_action = response.url
+        self._assert_non_error_response(response)
+        login_form_html_node = self._parse_form_from_html(response.text, self.CREDENTIALS_FORM_INDEX)
+        if login_form_html_node is None:
+            raise SAMLError(self._ERROR_NO_FORM % endpoint)
+        payload = dict((tag.attrib['name'], tag.attrib.get('value', ''))
+                       for tag in login_form_html_node.findall(".//input"))
+        return form_action, payload
+
+
+
 class FormParser(six.moves.html_parser.HTMLParser):
     def __init__(self):
         """Parse an html saml login form."""
@@ -308,8 +334,8 @@ class FormParser(six.moves.html_parser.HTMLParser):
 class SAMLCredentialFetcher(CachedCredentialFetcher):
     SAML_FORM_AUTHENTICATORS = {
         'okta': OktaAuthenticator,
-        'adfs': ADFSFormsBasedAuthenticator
-
+        'adfs': ADFSFormsBasedAuthenticator,
+        'shib': ShibbolethAuthenticator,
     }
 
     def __init__(self, client_creator, provider_name, saml_config,
