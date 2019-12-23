@@ -41,8 +41,8 @@ arguments:
 
 * ``-e / --endpoint`` - Your SAML idp endpoint.
 * ``-u / --username`` - Your SAML username.
-* ``-p / --provider`` - The name of your SAML provider. Currently okta and
-  adfs are supported.
+* ``-p / --provider`` - The name of your SAML provider. Currently okta, 
+  adfs, and shib are supported.
 * ``-a / --role-arn``- The role arn you wish to assume. Your SAML provider
   must be configured to give you access to this arn.
 
