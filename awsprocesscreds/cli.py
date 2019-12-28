@@ -48,6 +48,9 @@ def saml(argv=None, prompter=getpass.getpass, client_creator=None,
     parser.add_argument(
         '-v', '--verbose', action='store_true', help=('Enables verbose mode.')
     )
+    parser.add_argument(
+        '-D', '--duo', action='store_true', help=('Duo Security MFA prompt will be included in login flow.')
+    )
     args = parser.parse_args(argv)
 
     if args.verbose:
@@ -76,7 +79,8 @@ def saml(argv=None, prompter=getpass.getpass, client_creator=None,
             'role_arn': args.role_arn
         },
         password_prompter=prompter,
-        cache=cache
+        cache=cache,
+        duo_mfa_flow=args.duo,
     )
     creds = fetcher.fetch_credentials()
     creds['Version'] = 1

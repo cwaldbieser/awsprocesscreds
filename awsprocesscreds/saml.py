@@ -1,10 +1,13 @@
 # pylint: disable=R1710
 import base64
 import getpass
+import json
 import logging
+import time
 import xml.etree.cElementTree as ET
 from hashlib import sha1
 from copy import deepcopy
+from urllib.parse import quote_plus, urlencode
 
 import six
 import requests
@@ -60,6 +63,7 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
     USERNAME_FIELD = 'username'
     PASSWORD_FIELD = 'password'
     CREDENTIALS_FORM_INDEX = 0
+    DUO_FORM_INDEX = 0
     SAML_FORM_INDEX = 0
 
     _ERROR_BAD_RESPONSE = (
@@ -82,7 +86,7 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
         'Missing required config value for SAML: "%s"'
     )
 
-    def __init__(self, password_prompter, requests_session=None):
+    def __init__(self, password_prompter, requests_session=None, duo_mfa_flow=False):
         """Retrieve SAML assertion using form based auth.
 
         This class can retrieve a SAML assertion by using form
@@ -106,6 +110,7 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
             requests_session = requests.Session()
         self._requests_session = requests_session
         self._password_prompter = password_prompter
+        self._duo_mfa_flow = duo_mfa_flow
 
     def is_suitable(self, config):
         return config.get('saml_authentication_type') == 'form'
@@ -142,7 +147,86 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
         self._fill_in_form_values(config, form_data)
         response = self._send_form_post(login_url, form_data)
         # TODO: Duo MFA handling needs to activate at this point.
+        if self._duo_mfa_flow:
+            parser = FormParser()
+            parser.feed(response)
+            found = False
+            for n, form in enumerate(parser.forms):
+                if form.get('id') == 'duo_form':
+                    found = True
+                    break
+            if not found:
+                raise Exception("Could not find form with ID `duo_form`.")
+            form_node = ET.fromstring(parser.extract_form(n))
+            signed_duo_response, app = self._perform_duo_mfa_flow(login_url, response)
+            payload = dict((tag.attrib['name'], tag.attrib.get('value', ''))
+                           for tag in form_node.findall(".//input"))
+            payload['signedDuoResponse'] = ':'.join([signed_duo_response, app])
+            keys = list(payload.keys())
+            valid_keys = set(['signedDuoResponse', 'execution', '_eventId', 'geolocation'])
+            for key in keys:
+                if key not in valid_keys:
+                    del payload[key]
+            response = self._send_form_post(login_url, payload)
         return self._extract_saml_assertion_from_response(response)
+
+    def _perform_duo_mfa_flow(self, login_url, response):
+        """
+        Perform Duo MFA web flow.
+        """
+        parser = FrameParser()
+        frames = parser.process_frames(response)
+        found = False
+        for frame in frames:
+            if frame.get('id') == 'duo_iframe':
+                found = True
+                break
+        if not found:
+            raise Exception("Could not find `duo_iframe`.")
+        host = frame['data-host']
+        duo_sig, app = tuple(frame['data-sig-request'].split(':'))
+        frame_url = "https://{}/frame/web/v1/auth?tx={}&parent={}&v=2.6".format(host, duo_sig, quote_plus(login_url))
+        response = self._requests_session.get(frame_url, verify=True)
+        duo_form_html_node = self._parse_form_from_html(response.text, form_index=self.DUO_FORM_INDEX)
+        payload = dict((tag.attrib['name'], tag.attrib.get('value', ''))
+                       for tag in duo_form_html_node.findall(".//input"))
+        response = self._send_form_post(frame_url, payload)
+        # TODO: Parse form; set device == phone1 and factor == Duo Push; submit form.
+        duo_form_html_node = self._parse_form_from_html(response, form_index=self.DUO_FORM_INDEX)
+        payload = dict((tag.attrib['name'], tag.attrib.get('value', ''))
+                       for tag in duo_form_html_node.findall(".//input"))
+        action = duo_form_html_node.attrib.get('action', '')
+        frame_url = urljoin("https://{}".format(host), action)
+        payload['device'] = 'phone1'
+        payload['factor'] = 'Duo Push'
+        response = self._send_form_post(frame_url, payload)
+        response = json.loads(response)
+        if response.get('stat') != 'OK':
+            raise Exception("POST to Duo prompt resulted in error: {}".format(response))
+        txid = response.get('response', {}).get('txid')
+        sid = payload['sid']
+        payload = dict(sid=sid, txid=txid)
+        duo_status_url = urljoin("https://{}".format(host), "/frame/status")
+        while True:
+            raw_response = self._send_form_post(duo_status_url, payload)
+            response = json.loads(raw_response)
+            if response.get('stat') != 'OK':
+                raise Exception("POST to Duo status URL resulted in error: {}".format(raw_response))
+            status_code = response.get('response', {}).get('status_code') 
+            if status_code == 'pushed':
+                time.sleep(10)
+                continue
+            elif status_code == 'allow':
+                result_url = response.get('response', {}).get('result_url')
+                break
+            else:
+                raise Exception("Duo returned status code: `{}`".format(status_code))
+        payload = dict(sid=sid)
+        duo_result_url = urljoin("https://{}".format(host), result_url)
+        raw_response = self._send_form_post(duo_result_url, payload)
+        response = json.loads(raw_response)
+        cookie = response['response']['cookie']
+        return cookie, app
 
     def _validate_config_values(self, config):
         for required in ['saml_endpoint', 'saml_username']:
@@ -331,6 +415,30 @@ class FormParser(six.moves.html_parser.HTMLParser):
         raise FormParserError(message)
 
 
+class FrameParser(six.moves.html_parser.HTMLParser):
+    def __init__(self):
+        """
+        Parse an HTML Frame.
+        """
+        six.moves.html_parser.HTMLParser.__init__(self)
+        self.frames = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'iframe':
+            self.frames.append(dict(attrs))
+        
+    def error(self, message):
+        # ParserBase, the parent of HTMLParser, defines this abstract method
+        # instead of just raising an exception for some silly reason,
+        # so we have to implement it.
+        raise FormParserError(message)
+
+    def process_frames(self, html):
+        self.feed(html)
+        self.close()
+        return list(self.frames)
+
+
 class SAMLCredentialFetcher(CachedCredentialFetcher):
     SAML_FORM_AUTHENTICATORS = {
         'okta': OktaAuthenticator,
@@ -341,7 +449,8 @@ class SAMLCredentialFetcher(CachedCredentialFetcher):
     def __init__(self, client_creator, provider_name, saml_config,
                  role_selector=_role_selector,
                  password_prompter=getpass.getpass, cache=None,
-                 expiry_window_seconds=60 * 15):
+                 expiry_window_seconds=60 * 15,
+                 duo_mfa_flow=False):
         """Credential fetcher for SAML."""
         self._client_creator = client_creator
         self._role_selector = role_selector
@@ -350,7 +459,10 @@ class SAMLCredentialFetcher(CachedCredentialFetcher):
         authenticator_cls = self.SAML_FORM_AUTHENTICATORS.get(provider_name)
         if authenticator_cls is None:
             raise ValueError('Unsupported SAML provider: %s' % provider_name)
-        self._authenticator = authenticator_cls(password_prompter)
+        kwds = {}
+        if duo_mfa_flow:
+            kwds['duo_mfa_flow'] = True
+        self._authenticator = authenticator_cls(password_prompter, **kwds)
 
         self._assume_role_kwargs = None
 
