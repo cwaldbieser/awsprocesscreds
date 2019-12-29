@@ -16,14 +16,8 @@ def duo_mfa_flow_entry_point(parent, response):
     login_url = response.url
     parser = FormParser()
     parser.feed(response.text)
-    found = False
-    for n, form in enumerate(parser.forms):
-        if form.get('id') == 'duo_form':
-            found = True
-            break
-    if not found:
-        raise Exception("Could not find form with ID `duo_form`.")
-    form_node = ET.fromstring(parser.extract_form(n))
+    form = parser.extract_form_by_id('duo_form')
+    form_node = ET.fromstring(form)
     signed_duo_response, app = _perform_duo_mfa_flow(parent, login_url, response)
     payload = dict(
         (tag.attrib['name'], tag.attrib.get('value', ''))
@@ -43,17 +37,12 @@ def _perform_duo_mfa_flow(parent, login_url, response):
     Perform Duo MFA web flow.
     """
     parser = FrameParser()
-    frames = parser.process_frames(response.text)
-    found = False
-    for frame in frames:
-        if frame.get('id') == 'duo_iframe':
-            found = True
-            break
-    if not found:
-        raise Exception("Could not find `duo_iframe`.")
+    parser.process_frames(response.text)
+    frame = parser.get_frame_by_id('duo_iframe')
     host = frame['data-host']
+    duo_auth_version = parent.DUO_AUTH_VERSION
     duo_sig, app = tuple(frame['data-sig-request'].split(':'))
-    frame_url = "https://{}/frame/web/v1/auth?tx={}&parent={}&v=2.6".format(host, duo_sig, quote_plus(login_url))
+    frame_url = "https://{}/frame/web/v1/auth?tx={}&parent={}&v={}".format(host, duo_sig, quote_plus(login_url), duo_auth_version)
     response = parent._requests_session.get(frame_url, verify=True)
     duo_form_html_node = parent._parse_form_from_html(response.text, form_index=parent.DUO_FORM_INDEX)
     payload = dict((tag.attrib['name'], tag.attrib.get('value', ''))
@@ -64,8 +53,8 @@ def _perform_duo_mfa_flow(parent, login_url, response):
                    for tag in duo_form_html_node.findall(".//input"))
     action = duo_form_html_node.attrib.get('action', '')
     frame_url = urljoin("https://{}".format(host), action)
-    payload['device'] = 'phone1'
-    payload['factor'] = 'Duo Push'
+    payload['device'] = parent.duo_device
+    payload['factor'] = parent.duo_factor
     response = parent._send_form_post(frame_url, payload)
     response = json.loads(response.text)
     if response.get('stat') != 'OK':
@@ -74,6 +63,7 @@ def _perform_duo_mfa_flow(parent, login_url, response):
     sid = payload['sid']
     payload = dict(sid=sid, txid=txid)
     duo_status_url = urljoin("https://{}".format(host), "/frame/status")
+    duo_poll_seconds = parent.DUO_POLL_SECONDS
     while True:
         raw_response = parent._send_form_post(duo_status_url, payload)
         response = json.loads(raw_response.text)
@@ -81,7 +71,7 @@ def _perform_duo_mfa_flow(parent, login_url, response):
             raise Exception("POST to Duo status URL resulted in error: {}".format(raw_response.text))
         status_code = response.get('response', {}).get('status_code') 
         if status_code == 'pushed':
-            time.sleep(10)
+            time.sleep(duo_poll_seconds)
             continue
         elif status_code == 'allow':
             result_url = response.get('response', {}).get('result_url')
@@ -94,4 +84,3 @@ def _perform_duo_mfa_flow(parent, login_url, response):
     response = json.loads(raw_response.text)
     cookie = response['response']['cookie']
     return cookie, app
-

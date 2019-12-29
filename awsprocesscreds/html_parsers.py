@@ -7,6 +7,10 @@ class FormParserError(Exception):
     pass
 
 
+class FrameParserError(Exception):
+    pass
+
+
 class FormParser(six.moves.html_parser.HTMLParser):
     def __init__(self):
         """Parse an html saml login form."""
@@ -42,6 +46,21 @@ class FormParser(six.moves.html_parser.HTMLParser):
             self._dict2str(form),
             ''.join('<input %s/>' % self._dict2str(f) for f in fields))
 
+    def extract_form_by_id(self, form_id):
+        """
+        Return the form with id equal to `form_id`.
+        Raise an exception if not found.
+        """
+        found = False
+        forms = self.forms
+        for n, form in enumerate(forms):
+            if form.get('id') == form_id:
+                found = True
+                break
+        if not found:
+            raise Exception("Could not find form with ID `{}`.".format(form_id))
+        return self.extract_form(n) 
+
     def error(self, message):
         # ParserBase, the parent of HTMLParser, defines this abstract method
         # instead of just raising an exception for some silly reason,
@@ -65,11 +84,27 @@ class FrameParser(six.moves.html_parser.HTMLParser):
         # ParserBase, the parent of HTMLParser, defines this abstract method
         # instead of just raising an exception for some silly reason,
         # so we have to implement it.
-        raise FormParserError(message)
+        raise FrameParserError(message)
 
     def process_frames(self, html):
         self.feed(html)
         self.close()
         return list(self.frames)
+
+    def get_frame_by_id(self, frame_id):
+        """
+        Return frame with id `frame_id`.
+        Raise exception if not found.
+        """
+        frames = self.frames
+        found = False
+        for frame in frames:
+            if frame.get('id') == frame_id:
+                found = True
+                break
+        if not found:
+            raise Exception("Could not find `{}`.".format(frame))
+        return frame
+        
 
 

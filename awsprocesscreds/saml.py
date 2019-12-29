@@ -61,6 +61,8 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
     CREDENTIALS_FORM_INDEX = 0
     DUO_FORM_INDEX = 0
     SAML_FORM_INDEX = 0
+    DUO_AUTH_VERSION = '2.6'
+    DUO_POLL_SECONDS = 10
 
     _ERROR_BAD_RESPONSE = (
         'Received a non-200 response (%s) when making a request to: %s'
@@ -81,6 +83,9 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
     _ERROR_MISSING_CONFIG = (
         'Missing required config value for SAML: "%s"'
     )
+
+    duo_device = 'phone1'
+    duo_factor = 'Duo Push'
 
     def __init__(self, password_prompter, requests_session=None, flows=None):
         """Retrieve SAML assertion using form based auth.
