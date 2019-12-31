@@ -64,10 +64,15 @@ def _perform_duo_mfa_flow(parent, login_url, response, duo_device, duo_factor):
     frame_url = urljoin("https://{}".format(host), action)
     logger.debug("DUO prompt endpoint: {}".format(frame_url))
     payload['device'] = duo_device
-    payload['factor'] = duo_factor
+    if duo_factor == "webauthn":
+        payload['factor'] = "WebAuthn Credential"
+    else:
+        payload['factor'] = duo_factor
     if duo_factor == 'Passcode':
         payload['passcode'] = getpass.getpass("Passcode: ")
+    logger.debug("DUO prompt endpoint payload: {}".format(payload))
     response = parent._send_form_post(frame_url, payload)
+    logger.debug("Duo prompt endpoint response: {}".format(response.text))
     response = json.loads(response.text)
     if response.get('stat') != 'OK':
         raise Exception("POST to Duo prompt resulted in error: {}".format(response))
@@ -77,10 +82,32 @@ def _perform_duo_mfa_flow(parent, login_url, response, duo_device, duo_factor):
     duo_status_url = urljoin("https://{}".format(host), "/frame/status")
     duo_poll_seconds = parent.DUO_POLL_SECONDS
     logger.debug("DUO status endpoint: {}".format(duo_status_url))
+    if duo_factor == 'webauthn':
+        logger.debug("Getting challenge from Duo prompt endpoint ...")
+        logger.debug("DUO device: {}".format(duo_device))
+        #payload['device'] = duo_device
+        payload['factor'] = "WebAuthn Credential"
+        payload['device'] = "WA5NXAL405S765X5WJFA"
+        logger.debug("DUO status URL: {}".format(duo_status_url))
+        logger.debug("DUO payload: {}".format(payload))
+        raw_response = parent._send_form_post(duo_status_url, payload)
+        try:
+            response = json.loads(raw_response.text)
+        except Exception as ex:
+            logger.error("DUO Error decoding JSON response from prompt endpoint: {}".format(ex))
+            raise
+        # Example response
+        # {"stat": "OK", "response": {"webauthn_credential_request_options": {"allowCredentials": [{"transports": ["usb", "nfc", "ble"], "id": "_HbP_XU2bqAFEi6spjC6RT00JysSJZPYg-U32zK_7i4mnzrd-SPQRhJh12Olk0xHXQL720PTvLEBfvhhla3-8A", "type": "public-key"}], "rpId": "duosecurity.com", "timeout": 60000, "challenge": "YagLoMMgBn8UlOsm3do5yVE55erM1XxJ", "sessionId": "BY_Y_j5zNHM4aPlu25JCqGXJqI8YgYuaYYloB2hR2jc"}, "status": "Use your Security Key to log in...", "status_code": "webauthn_sent"}} 
+        if response.get('stat') != 'OK':
+            raise Exception("DUO POST for credential challenge resulted in error: {}".format(response))
+        webauthn_opts = response.get('response', {}).get('webauthn_credential_request_options') 
+        # TODO: submit options to authenticator, pass results to Duo endpoint. 
+        raise Exception("webauthn_opts: {}".format(webauthn_opts))
     while True:
         raw_response = parent._send_form_post(duo_status_url, payload)
         response = json.loads(raw_response.text)
         if response.get('stat') != 'OK':
+            logger.error("DUO stat code: {}".format(response.get('stat')))
             raise Exception("POST to Duo status URL resulted in error: {}".format(raw_response.text))
         status_code = response.get('response', {}).get('status_code') 
         if status_code == 'pushed':
@@ -92,11 +119,14 @@ def _perform_duo_mfa_flow(parent, login_url, response, duo_device, duo_factor):
             result_url = response.get('response', {}).get('result_url')
             break
         else:
+            logger.error("DUO status code: {}".format(response.get('stat')))
+            logger.error("DUO raw response: {}".format(raw_response.text))
             raise Exception("Duo returned status code: `{}`".format(status_code))
     payload = dict(sid=sid)
     duo_result_url = urljoin("https://{}".format(host), result_url)
-    logger.debug("DUO result URL: {}".format(duo_result_url))
+    logger.debug("DUO status result endpoint: {}".format(duo_result_url))
     raw_response = parent._send_form_post(duo_result_url, payload)
+    logger.debug("DUO status result endpoint response: {}".format(raw_response.text))
     response = json.loads(raw_response.text)
     cookie = response['response']['cookie']
     logger.debug("DUO cookie: {}".format(cookie))

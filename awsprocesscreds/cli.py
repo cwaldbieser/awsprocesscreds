@@ -54,7 +54,7 @@ def saml(argv=None, prompter=getpass.getpass, client_creator=None,
     parser.add_argument(
         '--duo-factor',
         action='store',
-        choices=['Duo Push', 'Phone Call', 'Passcode',],
+        choices=['Duo Push', 'Phone Call', 'Passcode', 'webauthn'],
         default='Duo Push',
         help=('Specify the Duo MFA factor to use.  Default `Duo Push`.')
     )
