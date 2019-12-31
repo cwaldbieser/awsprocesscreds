@@ -46,19 +46,27 @@ def saml(argv=None, prompter=getpass.getpass, client_creator=None,
         )
     )
     parser.add_argument(
-        '-v', '--verbose', action='store_true', help=('Enables verbose mode.')
+        '-D', '--duo', action='store_true', help=('Duo Security MFA prompt will be included in login flow.')
     )
     parser.add_argument(
-        '-D', '--duo', action='store_true', help=('Duo Security MFA prompt will be included in login flow.')
+        '--logfile', type=argparse.FileType('a+'), default=None, action='store', help=('Log to file LOGFILE.')
+    )
+    parser.add_argument(
+        '--loglevel',
+        choices=['debug', 'info', 'warn', 'error', 'critical',],
+        default='error',
+        action='store', 
+        help=('Log events with severity LOGLEVEL or greater.')
     )
     args = parser.parse_args(argv)
 
-    if args.verbose:
+    if args.logfile is not None:
         logger = logging.getLogger('awsprocesscreds')
-        logger.setLevel(logging.INFO)
-        handler = PrettyPrinterLogHandler(sys.stdout)
-        handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(message)s')
+        level = getattr(logging, args.loglevel.upper())
+        logger.setLevel(level)
+        handler = PrettyPrinterLogHandler(args.logfile)
+        handler.setLevel(level)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         logger.addHandler(handler)
 
