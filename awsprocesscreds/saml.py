@@ -150,8 +150,8 @@ class GenericFormsBasedAuthenticator(SAMLAuthenticator):
         self._fill_in_form_values(config, form_data)
         response = self._send_form_post(login_url, form_data)
         flows = self._flows
-        for flow in flows:
-            response = flow(self, response)
+        for flow, flow_config in flows:
+            response = flow(self, response, **flow_config)
         return self._extract_saml_assertion_from_response(response.text)
 
     def _validate_config_values(self, config):
@@ -309,7 +309,8 @@ class SAMLCredentialFetcher(CachedCredentialFetcher):
                  role_selector=_role_selector,
                  password_prompter=getpass.getpass, cache=None,
                  expiry_window_seconds=60 * 15,
-                 duo_mfa_flow=False):
+                 duo_mfa_flow=False,
+                 duo_config=None):
         """Credential fetcher for SAML."""
         self._client_creator = client_creator
         self._role_selector = role_selector
@@ -322,7 +323,7 @@ class SAMLCredentialFetcher(CachedCredentialFetcher):
         kwds = {}
         if duo_mfa_flow:
             kwds['flows'] = flows
-            flows.append(duo_mfa_flow_entry_point)
+            flows.append((duo_mfa_flow_entry_point, duo_config))
         self._authenticator = authenticator_cls(password_prompter, **kwds)
         self._assume_role_kwargs = None
         if cache is None:

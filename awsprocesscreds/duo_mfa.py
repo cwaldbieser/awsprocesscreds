@@ -1,4 +1,5 @@
 
+import getpass
 import json
 import logging
 import time
@@ -12,7 +13,7 @@ from .html_parsers import FormParser, FrameParser
 
 logger = logging.getLogger(__name__)
 
-def duo_mfa_flow_entry_point(parent, response):
+def duo_mfa_flow_entry_point(parent, response, duo_device, duo_factor):
     """
     Process Duo MFA flow.
     """
@@ -23,7 +24,7 @@ def duo_mfa_flow_entry_point(parent, response):
     parser.feed(response.text)
     form = parser.extract_form_by_id('duo_form')
     form_node = ET.fromstring(form)
-    signed_duo_response, app = _perform_duo_mfa_flow(parent, login_url, response)
+    signed_duo_response, app = _perform_duo_mfa_flow(parent, login_url, response, duo_device, duo_factor)
     payload = dict(
         (tag.attrib['name'], tag.attrib.get('value', ''))
             for tag in form_node.findall(".//input")
@@ -38,7 +39,7 @@ def duo_mfa_flow_entry_point(parent, response):
     logger.info("DUO MFA flow complete.")
     return response
 
-def _perform_duo_mfa_flow(parent, login_url, response):
+def _perform_duo_mfa_flow(parent, login_url, response, duo_device, duo_factor):
     """
     Perform Duo MFA web flow.
     """
@@ -62,8 +63,10 @@ def _perform_duo_mfa_flow(parent, login_url, response):
     action = duo_form_html_node.attrib.get('action', '')
     frame_url = urljoin("https://{}".format(host), action)
     logger.debug("DUO prompt endpoint: {}".format(frame_url))
-    payload['device'] = parent.duo_device
-    payload['factor'] = parent.duo_factor
+    payload['device'] = duo_device
+    payload['factor'] = duo_factor
+    if duo_factor == 'Passcode':
+        payload['passcode'] = getpass.getpass("Passcode: ")
     response = parent._send_form_post(frame_url, payload)
     response = json.loads(response.text)
     if response.get('stat') != 'OK':

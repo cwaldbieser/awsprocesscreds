@@ -49,6 +49,16 @@ def saml(argv=None, prompter=getpass.getpass, client_creator=None,
         '-D', '--duo', action='store_true', help=('Duo Security MFA prompt will be included in login flow.')
     )
     parser.add_argument(
+        '--duo-device', action='store', default='phone1', help=('Specify the Duo MFA device to use.  Default `phone1`.')
+    )
+    parser.add_argument(
+        '--duo-factor',
+        action='store',
+        choices=['Duo Push', 'Phone Call', 'Passcode',],
+        default='Duo Push',
+        help=('Specify the Duo MFA factor to use.  Default `Duo Push`.')
+    )
+    parser.add_argument(
         '--logfile', type=argparse.FileType('a+'), default=None, action='store', help=('Log to file LOGFILE.')
     )
     parser.add_argument(
@@ -89,6 +99,7 @@ def saml(argv=None, prompter=getpass.getpass, client_creator=None,
         password_prompter=prompter,
         cache=cache,
         duo_mfa_flow=args.duo,
+        duo_config=dict(duo_device=args.duo_device, duo_factor=args.duo_factor),
     )
     creds = fetcher.fetch_credentials()
     creds['Version'] = 1
