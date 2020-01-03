@@ -114,29 +114,28 @@ def _perform_duo_mfa_flow(parent, login_url, response, duo_device, duo_factor):
         webauthn_opts = response.get('response', {}).get('webauthn_credential_request_options') 
         origin = 'https://api-6bfb7da1.duosecurity.com'
         logger.info("Getting assertion from authenticator ...")
-        assertion = present_challenge_to_authenticator(webauthn_opts, origin)
+        assertion, client_data = present_challenge_to_authenticator(webauthn_opts, origin)
         logger.debug("DUO authenticator assertion: {}".format(assertion))
         payload['device'] = "webauthn_credential"
         payload['factor'] = "webauthn_finish"
         auth_data = assertion.auth_data
-        b64_cred_id = base64.urlsafe_b64encode(assertion.credential['id']).decode('ascii')
+        b64_cred_id = base64.urlsafe_b64encode(assertion.credential['id']).decode('utf-8').rstrip('=')
         response_data = json.dumps(dict(
             sessionId=webauthn_opts['sessionId'],
             id=b64_cred_id,
             rawId=b64_cred_id,
             type=assertion.credential['type'],
-            authenticatorData=base64.b64encode(auth_data.rp_id_hash + struct.pack(">BI", auth_data.flags, auth_data.counter)).decode('ascii'),
-            clientDataJSON=base64.b64encode(json.dumps(dict(
-                challenge=webauthn_opts['challenge'],
-                clientExtensions={},
-                hashAlgorithm="SHA-256",
-                origin=origin,
-                type="webauthn.get"
-            )).encode('ascii')).decode('ascii'),
+            authenticatorData=base64.urlsafe_b64encode(auth_data.rp_id_hash + struct.pack(">BI", auth_data.flags, auth_data.counter)).decode('utf-8'),
+            clientDataJSON=client_data.b64,
             signature=assertion.signature.hex(),
         ))
         logger.debug("DUO webauthn response_data: {}".format(response_data))
         payload['response_data'] = response_data
+        valid_keys = set(['sid', 'device', 'factor', 'response_data', 'out_of_date', 'days_out_of_date', 'days_to_block'])
+        keys = list(payload.keys())
+        for k in keys:
+            if not k in valid_keys:
+                del payload[k]    
         logger.debug("DUO prompt URL: {}".format(prompt_endpoint))
         logger.debug("DUO payload : {}".format(payload))
         raw_response = parent._send_form_post(prompt_endpoint, payload)
