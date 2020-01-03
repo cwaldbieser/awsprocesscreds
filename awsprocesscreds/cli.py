@@ -103,6 +103,7 @@ def saml(argv=None, prompter=getpass.getpass, client_creator=None,
     )
     creds = fetcher.fetch_credentials()
     creds['Version'] = 1
+    logger.info("Temporary credentials have been retreived.")
     print(json.dumps(creds) + '\n')
 
 

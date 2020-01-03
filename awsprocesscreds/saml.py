@@ -357,9 +357,10 @@ class SAMLCredentialFetcher(CachedCredentialFetcher):
         }
 
     def _get_credentials(self):
+        logger.info("Credentials are not cached.  Feching temporary credentials ...")
         kwargs = self._get_assume_role_kwargs()
         client = self._create_client()
-        logger.info(
+        logger.debug(
             'Retrieving credentials with STS.AssumeRoleWithSaml() using the '
             'following parameters: %s', kwargs
         )

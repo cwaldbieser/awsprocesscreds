@@ -28,6 +28,7 @@ def present_challenge_to_authenticator(webauthn_cred_req_opts, origin='"https://
     Present webauthn challenge and credential options to authenticator.
     Return assertion.
     """
+    logger.info("FIDO2 presenting WebAuthn challenge to an authenticator (e.g. Yubikey)")
     use_prompt = False
     pin = None
     uv = "discouraged"
@@ -114,6 +115,7 @@ def present_challenge_to_authenticator(webauthn_cred_req_opts, origin='"https://
     assertions, client_data = client.get_assertion(request_options["publicKey"], pin=pin)
     assertion = assertions[0]  # Only one cred in allowCredentials, only one response.
     logger.debug("ASSERTION DATA:", assertion)
+    logger.info("FIDO2 Authenticator successfully validated challenge.")
     return assertion, client_data
 
 
