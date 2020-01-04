@@ -8,6 +8,8 @@ from fido2 import webauthn
 from getpass import getpass
 import base64
 import logging
+import os
+import io
 import sys
 
 logger = logging.getLogger(__name__)
@@ -74,7 +76,15 @@ def present_challenge_to_authenticator(webauthn_cred_req_opts, origin='"https://
 
     # Authenticate the credential
     if use_prompt:
-        logger.debug("\nTouch your authenticator device now...\n")
+        logger.debug("Touch your authenticator device now...")
+        try:
+            fd = os.open('/dev/tty', os.O_RDWR|os.O_NOCTTY)
+            tty = io.FileIO(fd, 'w+')
+            stream = io.TextIOWrapper(tty)
+            stream.write("\nTouch your authenticator device now...\n")
+            stream.flush()
+        except Exception as ex:
+            logger.warn("FIDO2 Could not write to current TTY. {}".format(ex))
 
     allowed_creds = []
     allow_creds_reps = []
